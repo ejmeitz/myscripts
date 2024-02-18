@@ -2,27 +2,23 @@ import os
 import numpy as np
 import shutil
 import time
-from typing import Type
 
-from ..FileIO.InFile import InFile
+from .FileIO.InFile import InFile
 
-class LAMMPS_Job:
+class Job:
 
-    def __init__(self, parent_project, name: str, n_seeds: int, seed_variables :list, variables : dict = None):
+    def __init__(self, parent_project : 'AbstractProject', name: str, n_seeds: int, seed_variables :list,
+                  variables : dict = None, create_file_structure: bool = True, seed_id : int = None):
         '''
-        Parent Project: Type of LAMMPS_Project, contains the information about where files will be saved etc.
-        Name: Name to be used when file to store job is created
-        n_seeds: Number of seeds to run.
-        seed_variables: Name of variables in the in-file to change with each seed (e.g. velocity_seed). If more than
-            one variable is passed they will be changed at the same time and not generate all combinations. The seed
-            is generated randomly from 1000-1000000
-        variables: Dictionary of variable name & value pairs. For example {"Temps": [10, 20, 30]}. The name in the
-            keys should match a variable in the LAMMPS input file.
+        Parent Project:
+        Name:
+        Variables:
         '''
         self.parent_project = parent_project
         self.name = name
         self.variables = variables
         self.n_seeds = n_seeds
+        self.seed_id = seed_id
         self.seed_variables = seed_variables
 
         '''
@@ -31,11 +27,13 @@ class LAMMPS_Job:
         In-File Path: Path to in-file for this job.
         In-File: An InFile object which parses and manipultes the in-file text.
         '''
-        self.outpath = None
-        self.in_file_name = None
+        self.outpath = os.path.join(self.parent_project.outpath, self.name)
+        self.parent_in_file_name = os.path.basename(self.parent_project.infile_path)
+        self.in_file_name = self.parent_in_file_name + "_" + self.name
 
-        self.__create_output_file_structure()
-        self.__create_in_files()
+        if create_file_structure:
+            self.__create_output_file_structure()
+            self.__create_in_files()
 
 
 
@@ -44,7 +42,6 @@ class LAMMPS_Job:
         Creates a subfolder inside of the parent_project folder. All of the files
             associated with this job (e.g. in-file, dumps) are saved here.
         '''
-        self.outpath = os.path.join(self.parent_project.outpath, self.name)
         #Create sub-folder if this is first time job is excuted
         if not os.path.exists(self.outpath):
             try:
@@ -61,11 +58,6 @@ class LAMMPS_Job:
         Using the 'variables' member variable create a modified version of the in-file
             from the 'parent_project'. File will be written to this Job's output folder.
         '''
-        #Build in-file name from parent project name and job name
-        parent_in_file_name = os.path.basename(self.parent_project.infile_path)
-        self.in_file_name = parent_in_file_name + "_" + self.name
-
-
         for i in range(self.n_seeds):
             seed_outpath = os.path.join(self.outpath, f"seed{i}")
             in_file_path = os.path.join(seed_outpath, self.in_file_name)
@@ -76,7 +68,7 @@ class LAMMPS_Job:
                 shutil.copy2(self.parent_project.infile_path, seed_outpath)
 
                 #Rename in-file to incldue job name
-                os.rename(os.path.join(seed_outpath,parent_in_file_name), in_file_path)
+                os.rename(os.path.join(seed_outpath, self.parent_in_file_name), in_file_path)
 
                 in_file = InFile(in_file_path)
                 
@@ -93,15 +85,11 @@ class LAMMPS_Job:
 
 
 
-    def run(self, lammps_env_var, seed_num) -> int:
+    def run(self, lammps_cmd, seed_num) -> int:
         '''
         Executes job through LAMMPS CLI.
         Can pass env var as "lmp_serial" for serial or "mpirun -np {#} lmp_mpi" for mpi
         '''
-
-        print("===============================")
-        print(f"Attempting To Run: {self.name}")
-        print("===============================\n")
         #Build and run command to exectue LAMMPS
 
         #cd to project folder cause LAMMPS dumps output at path it is run from
@@ -109,6 +97,6 @@ class LAMMPS_Job:
         infile_path = os.path.join(self.outpath, f"seed{seed_num}",self.in_file_name)
         #Build and run lammps command
         start_time = time.time()
-        res = os.system(f"{lammps_env_var} -in {infile_path} -screen none")
+        res = os.system(f"{lammps_cmd} -in {infile_path} -screen none")
         print("--- %s seconds ---" % (time.time() - start_time))
         return res

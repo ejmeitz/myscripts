@@ -1,11 +1,16 @@
 import os
 import copy
 import shutil
+import time
+from joblib import Parallel, delayed
+from rich import print
 
-from .LAMMPS_Job import LAMMPS_Job
-from ..FileIO.InFile import InFile
+from .LAMMPS_Job import Job
+from .FileIO.InFile import InFile
 
-class LAMMPS_Project:
+
+#All jobs created within a project will be stored in the same place
+class LocalProject:
     '''
     - Project to be run on the local machine. 
     - Expects local version of LAMMPS to be accessible through the command line.
@@ -85,7 +90,7 @@ class LAMMPS_Project:
 
         # #Check if a job with this name was created before
         # if name in self.old_jobs.keys():
-        #     self.active_jobs[name] = LAMMPS_Job(self, name)
+        #     self.active_jobs[name] = Job(self, name)
         #     print("Found job with same name in file structure. Re-activating old job with its orignal variables.")
         #     return
 
@@ -106,7 +111,7 @@ class LAMMPS_Project:
                     raise KeyError(f"{key} is not a modifiable variable in the in-file at {self.infile_path}")
                 
         
-        self.jobs[name] = LAMMPS_Job(self, name, n_seeds, seed_variables, job_variables)
+        self.jobs[name] = Job(self, name, n_seeds, seed_variables, job_variables)
 
     # def run_all_jobs(self, lammps_env_var = "lmp") -> None:
     #     if len(self.jobs) > 0:
@@ -121,16 +126,52 @@ class LAMMPS_Project:
     #                 print(f"{job.name} failed. Exited with code {exit_status}."); print()
     #     else:
     #         print("No active yet. See create_job() & activate_old_job().")
+        
+    def get_all_jobs(self):
+        #For each seed in a job create a dummy Job() object with 1 seed and correct paths
+        all_jobs = []
+        for job in self.jobs.values():
+            for seed in range(job.n_seeds):
+                all_jobs.append(Job(self, job.name, 1, job.seed_variables, job.variables, False, seed))
+
+        return all_jobs
     
-    def run_job(self, job_name, lammps_env_var = "lmp"):
+    def run_all_jobs_mpi(self, ncores, n_mpi_domains, lammps_env_var = "lmp"):
+                #Run all active jobs -- NO PARALLELISM OVER SEEDS
+        start_time = time.time()
+
+        max_parallel_jobs = int(ncores//n_mpi_domains)
+        cmd = f"mpirun -np {n_mpi_domains} {lammps_env_var}"
+
+        jobs = self.get_all_jobs()
+
+        if len(jobs) <= max_parallel_jobs:
+            Parallel(n_jobs = max_parallel_jobs)(delayed(self.run_single_job_seed)(job, cmd) for job in jobs)
+
+        else: #chunk jobs into smaller arrays smaller than "max_parallel_jobs"
+            job_chunked = [jobs[i:i + max_parallel_jobs] for i in range(0, len(jobs), max_parallel_jobs)]
+            n_chunks = len(job_chunked)
+            for i,chunk in enumerate(job_chunked):
+                print("===============");print(f"Batch {i+1} of {n_chunks}"); print("===============")
+                Parallel(n_jobs = len(chunk))(delayed(self.run_single_job_seed)(job, cmd) for job in chunk)
+        print(f"[bold green]JOBS COMPLETE[/bold green] All jobs took {time.time() - start_time} seconds")
+
+    def run_single_job_seed(self, job : Job, lammps_cmd):
+        print(f"[blue] Running [/blue]: {job.name} seed {job.seed_id}\n")
+        exit_status = job.run(lammps_cmd, job.seed_id)
+        if exit_status != 0:
+            print(f"{job.name} failed. Exited with code {exit_status} on seed {job.seed_id}."); print()
+        print(f"{job.name} seed {job.seed_id} [green] completed [/green] successfully."); print()
+    
+
+    def run_job_serial(self, job_name, lammps_cmd = "lmp"):
         if self.only_make_plots:
             raise RuntimeError("Flag only_make_plots is set to True")
         try:
             for seed in range(self.jobs[job_name].n_seeds):
-                exit_status = self.jobs[job_name].run(lammps_env_var, seed)
+                exit_status = self.jobs[job_name].run(lammps_cmd, seed)
                 if exit_status != 0:
                     print(f"{job_name} failed. Exited with code {exit_status} on seed {seed}."); print()
             print(f"{job_name} completed successfully."); print()
         except KeyError:
             raise KeyError(f"No job with name {job_name}")
-
