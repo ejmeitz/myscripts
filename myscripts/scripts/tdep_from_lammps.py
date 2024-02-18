@@ -1,9 +1,7 @@
 import numpy as np
 import os
 from pathlib import Path
-
-import typer
-app = typer.Typer()
+from typing import Annotated
 
 def remove_dump_headers(simulation_folder,tdep_folder):
     bash_script = f""" #!/bin/bash
@@ -160,8 +158,7 @@ def run(temp, dt_fs, num_unit_cell, path, num_threads, r_cut2, r_cut3, r_cut4, r
     TDEP_folder = parse_MD_data(path, num_unit_cell, temp, dt_fs, recalc_files, stride, nsteps)
     run_TDEP(TDEP_folder, num_threads, r_cut2, r_cut3, r_cut4, stride)
 
-@app.command()
-def main(
+def tdep_from_lammps(
     temperature : float,
     timestep_fs : float,
     num_unit_cell : int,
@@ -175,11 +172,11 @@ def main(
     make_input_files : bool = True,
     stride : int = 1,
 ):
+    """
+    Calculates force constants from LAMMPS output. Assumes system is monoatomic. 
+    """
 
     os.system(f"cp {ucposcar_path} {os.path.join(path, 'infile.ucposcar')}")
 
     run(temperature, timestep_fs, num_unit_cell,
          path, num_threads, r_cut2, r_cut3, r_cut4, make_input_files, stride, nsteps)
-
-if __name__ == "__main__":
-    app()

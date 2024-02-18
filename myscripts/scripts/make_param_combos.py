@@ -1,78 +1,54 @@
-#! /usr/bin/env python3
-
+from typing import Any, Optional, List
 import numpy as np
-import pandas as pd
-from pathlib import Path
-from typing import List, Optional
-from typing_extensions import Annotated
-
 from itertools import product
-import os
-import ast
 
-import typer
-app = typer.Typer()
 
-def process(data: str):
-    try:
-        return ast.literal_eval(data)
-    except (ValueError, SyntaxError) as e:
-        typer.echo(f"Error parsing param_values as list of lists from string: {e}")
+def make_param_combos(
+    params : dict[str, List[Any]],
+    index_by: Optional[List[int]] = None,
+    ) -> dict[str, np.ndarray]:
 
-@app.command()
-def main(
-    param_names: Annotated[
-        str, typer.Argument(help = "Names of parameters which match the names of the variables in the LAMMPS in file")
-    ],
-    param_values: Annotated[
-        str, typer.Argument(help = "List of lists of parameter values formated as a string. For example, '[[1,2], [3,4]]'")
-    ],
-    index_by: Annotated[
-        Optional[List[int]], typer.Argument(help = "List of integers that tell the function how to generate the combinations. If the entry is -1, then \
-        the parameter is included when calculating all combinations. If an integer is given, then that parameter is always matched \
-        to the value in that list.")
-    ] = None,
-    outfile_path: Annotated[
-        Optional[Path], typer.Argument(help = "Dir where the combinations will be saved", show_default="current directory")
-    ] = Path(os.getcwd())
-):
     """
-    Create a csv file with all combinations of parameters.
+    Create a dictionary of all combinations of parameters. Combinations are returned as a dictionary of numpy arrays.
     
+    Parameters:
+    -----------
+    - `params : dict`: Dictionary of parameter names and values. Names should be strings, value should be lists.
+    - `index_by : Optional[List[int]]` : List of integers that tell the function how to generate the combinations.
+       If the entry is -1, then the parameter is included when calculating all combinations.
+       If an integer is given, then that parameter is always matched to the value in that list.
+
+    Returns:
+    --------
+    - `data : dict` : Dictionary of parameter names and their value for a given combination. 
+    For example, the entry in position 0 of each value in the dictionary is the first combination.
+
     Example:
-    param_names = "['Temp', 'Interval', 'Lattice_const']"
-    param_values = "[[10, 20, 30], [1, 2], [5.5, 5.4, 5.3]]"
-    outfile_path = "C:/Users/<username>/Desktop"
+    --------
+    ```python
+    params = {'Temp': [10, 20, 30], 'Interval': [1, 2], 'Lattice_const': [5.5, 5.4, 5.3]}
+    outfile_path = "C:/Users/username/Desktop"
     index_by = [-1, -1, 0]
-
-    Example Usage:
-    make_param_combos "['Temp', 'Interval', 'Lattice_const']" "[[10, 20, 30], [1, 2], [5.5, 5.4, 5.3]]" --index-by -1 --index-by -1 --index-by 0
-
-    This will generate the following combinations. Note how the lattice constant is always pegged to the temperature.
-    10 1 5.5
-    10 2 5.5
-    20 1 5.4
-    20 2 5.4
-    30 1 5.3
-    30 2 5.3
+    ```
+    These inputs will generate the following combinations. 
+    ```python
+    {'Temp': array([10., 10., 20., 20., 30., 30.]),
+     'Interval': array([1., 2., 1., 2., 1., 2.]),
+     'Lattice_const': array([5.5, 5.5, 5.4, 5.4, 5.3, 5.3])}
+    ```
+    The first parameter combo is the first enetry in each array, and so on. Note how the lattice constant
+    is always pegged to the temperature.
     """
-
-    param_names = process(param_names)
-    param_values = process(param_values)
-
-    assert len(param_names) == len(param_values), f"Number of parameter names ({len(param_names)}) does not match number of parameter values ({len(param_values)})"
-    assert len(index_by) == len(param_names), f"Length of index_by ({len(index_by)}) does not match number of parameters ({len(param_names)})"
-    assert np.all(index_by != np.arange(0,len(index_by))), f"Cannot index param with itself"
 
     if index_by == None:
-        index_by = -1*np.ones(len(param_names))
+            index_by = -1*np.ones(len(param_names))
     else:
         index_by = np.array(index_by)
 
-    param_values = np.array(param_values, dtype = object)
-    param_names = np.array(param_names)
+    param_values =  [np.array(arr) for arr in params.values()]
+    param_names = np.array(list(params.keys()))
 
-    combos = product(*param_values[index_by == -1])
+    combos = product(*[pv for i,pv in enumerate(param_values) if index_by[i] == -1])
     n_combos = np.prod([len(param_values[i]) for i in range(len(param_values)) if index_by[i] == -1])
     data = {param_names[i] : np.zeros(n_combos) for i in range(len(param_names))}
 
@@ -85,9 +61,4 @@ def main(
                 other_idx = np.where(param_values[index_by[j]] == combo_np[index_by[j]])[0][0]
                 data[param_name][i] = param_values[j][other_idx]
 
-    df = pd.DataFrame(data)
-    df.to_csv(os.path.join(outfile_path, "param_combos.csv"), index=False)
-
-
-if __name__ == "__main__":
-    app()
+    return data
